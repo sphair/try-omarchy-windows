@@ -61,7 +61,7 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 			// window-close=off: the X must not hard-kill a running OS; the
 			// close guard intercepts the click and confirms + shuts down
 			// gracefully instead (closeguard.go).
-			"-display", sdlDisplay(true, cfg.hostCursor),
+			"-display", sdlDisplay(true, cfg.hostCursor, cfg.borderless),
 			"-serial", "file:"+filepath.Join(vm, "serial-gpu.log"),
 		)
 	} else {
@@ -69,7 +69,7 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 			"-machine", machine, "-cpu", "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,+aes",
 			"-smp", smp, "-m", mem,
 			"-vga", "none", "-device", displayDevice(cfg, hostmem),
-			"-display", sdlDisplay(false, cfg.hostCursor),
+			"-display", sdlDisplay(false, cfg.hostCursor, cfg.borderless),
 			"-serial", "file:"+filepath.Join(vm, "serial.log"),
 		)
 	}
@@ -171,7 +171,7 @@ func audioUnavailable(cfg *config) bool {
 		bytes.Contains(message, []byte("dsound audio driver"))
 }
 
-func sdlDisplay(gpu, hostCursor bool) string {
+func sdlDisplay(gpu, hostCursor, borderless bool) string {
 	gl := "off"
 	if gpu {
 		gl = "on"
@@ -180,7 +180,11 @@ func sdlDisplay(gpu, hostCursor bool) string {
 	if hostCursor {
 		cursor = "on"
 	}
-	return "sdl,gl=" + gl + ",show-cursor=" + cursor + ",window-close=off"
+	display := "sdl,gl=" + gl + ",show-cursor=" + cursor + ",window-close=off"
+	if borderless {
+		display += ",borderless=on"
+	}
+	return display
 }
 
 // prepareDisk gives the guest its writable disk: a sparse copy of the factory

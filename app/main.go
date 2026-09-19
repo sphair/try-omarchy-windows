@@ -32,8 +32,7 @@ const appTitle = "Try Omarchy"
 type config struct {
 	dir, hostDir, payloadDir    string
 	winqEmu, share              string
-	fresh, fullscreen, noGpu    bool
-	borderless                  bool
+	fresh, fullscreen, borderless, noGpu bool
 	hostCursor                  bool
 	lanPublic                   bool
 	instant, portable           bool
@@ -139,7 +138,7 @@ func main() {
 	flag.BoolVar(&cfg.fresh, "fresh", false, "start over and retain the previous writable disk for recovery")
 	flag.IntVar(&cfg.displays, "displays", 1, "number of guest displays (1 to 16)")
 	flag.BoolVar(&cfg.fullscreen, "fullscreen", false, "start fullscreen (Immersive)")
-	flag.BoolVar(&cfg.borderless, "borderless", false, "start borderless in the desktop work area")
+	flag.BoolVar(&cfg.borderless, "borderless", false, "start borderless and maximized (requires a borderless-enabled QEMU runtime)")
 	flag.IntVar(&cfg.memOverrideMiB, "memory", 0, "guest RAM in MiB (default: sized to this PC)")
 	flag.IntVar(&cfg.cpuOverride, "cpus", 0, "guest CPUs (default: sized to this PC)")
 	flag.IntVar(&cfg.diskGiB, "disk-size", 0, "guest disk capacity in GiB (0: default; grows existing disks, never shrinks)")
@@ -182,6 +181,9 @@ func main() {
 	updateWaitPID := flag.Int("update-wait-pid", 0, "internal: process to wait for before replacing the launcher")
 	updateRestartArgs := flag.String("update-restart-args", "", "internal: encoded launcher restart arguments")
 	flag.Parse()
+	if cfg.fullscreen && cfg.borderless {
+		fatal("Choose either -fullscreen or -borderless, not both.")
+	}
 	if *openDevices {
 		if err := runUSBDeviceUI(); err != nil {
 			fatal("Could not open USB devices: %v", err)
@@ -707,7 +709,7 @@ func main() {
 	// Launch-UX contract (NOTES.md): guest console sized to the window it will
 	// actually get, so the picture fills it from the first frame.
 	conW, conH := screenSize(cfg.fullscreen, cfg.borderless)
-	if !cfg.fullscreen && !cfg.borderless {
+	if !cfg.fullscreen {
 		if p := rememberedWindow(cfg.dir); p != nil && !p.Maximized {
 			conW, conH = p.consoleSize()
 		}

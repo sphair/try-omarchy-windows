@@ -1,4 +1,5 @@
 dist/
+runtime-build/output/
 *.ppm
 *.png
 *.log
