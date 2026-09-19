@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.0.20-preview - 2026-09-16
+
+- Recover automatically from an orphaned pacman database lock left by an
+  interrupted update, so later updates no longer need a manual `db.lck` removal.
+  The lock is removed only when it provably cannot belong to a live transaction.
+- Expose the Windows camera to the guest as a `Windows Camera` V4L2 device, on
+  demand: the Windows camera indicator lights only while an app is capturing.
+- Drop files from Windows onto the Omarchy window under the cursor and have the
+  application receive them directly. When nothing can take the files, the
+  transfer window still opens.
+- Pause the guest while Windows sleeps and resume it on wake, ahead of the
+  existing clock re-sync.
+- Refresh the guest package lock for current Arch repositories, which moves the
+  guest kernel to 7.2.6.
+- Boot the guest again: the camera channel used the `reconnect` chardev option,
+  which current QEMU rejects, so every launch died before the guest booted. It
+  now uses `reconnect-ms`.
+- Resolve the Media Foundation capture entry points across `mfplat.dll`, `mf.dll`
+  and `mfcore.dll` instead of assuming `mfplat.dll`, report a missing export as
+  an error instead of crashing, and set the frame size and rate through
+  `SetUINT64` rather than the inline-only `MFSetAttributeSize` and
+  `MFSetAttributeRatio` helpers. `MFEnumDeviceSources` lives in `mf.dll` on
+  current Windows, and the camera bridge took the launcher down on the first
+  real camera attempt.
+
 ## v0.0.19-preview - 2026-09-15
 
 - Create portable copies of normal installations directly as verified QCOW2
@@ -36,8 +61,7 @@
   and use a private temporary file during preparation.
 - Keep Settings accessible on smaller screens and add help for everyday controls.
 
-Development candidate; Windows acceptance remains pending. See
-[the combined testing checklist](docs/COMPLETION-CANDIDATE.md).
+Development candidate; Windows acceptance remains pending.
 
 ## v0.0.16-preview
 

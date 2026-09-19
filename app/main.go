@@ -713,6 +713,7 @@ func main() {
 		}
 	}
 	cfg.displayWidth, cfg.displayHeight = conW, conH
+	setVMDisplaySize(conW, conH)
 	cmdline += fmt.Sprintf(" video=%dx%d", conW, conH)
 
 	reclaimDir.Store(&cfg.dir)
@@ -724,6 +725,7 @@ func main() {
 	go runCursorReleaseGuard()
 	go runCloseGuard()
 	runClipboardBridge()
+	runCameraBridge()
 
 	if err := checkForwardBindings(cfg.forwards); err != nil {
 		fatal("Could not prepare port forwarding:\n\n%v", err)
