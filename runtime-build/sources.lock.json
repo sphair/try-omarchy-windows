@@ -57,6 +57,10 @@
       {
         "file": "patches/qemu/0012-share-secondary-sdl-gl-contexts.patch",
         "sha256": "ae3aea46f9ab12f06b9efde0f874f94c4515009c933ebc138abf4bb00f1057e8"
+      },
+      {
+        "file": "patches/qemu/0013-add-borderless-sdl-display-mode.patch",
+        "sha256": "d25f00c8ab19a37ca994882943ba73d6fa4dd7c5791379818492677bd9f18c8a"
       }
     ]
   },

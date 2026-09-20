@@ -43,6 +43,7 @@ var (
 	procRegisterClipboardFormatW = user32.NewProc("RegisterClipboardFormatW")
 	procIsClipboardFormatAvail   = user32.NewProc("IsClipboardFormatAvailable")
 	procSystemParametersInfoW    = user32.NewProc("SystemParametersInfoW")
+	procSetProcessDpiAwarenessCtx = user32.NewProc("SetProcessDpiAwarenessContext")
 	procGlobalAlloc              = kernel32.NewProc("GlobalAlloc")
 	procGlobalSize               = kernel32.NewProc("GlobalSize")
 	procGlobalLock               = kernel32.NewProc("GlobalLock")
@@ -73,6 +74,11 @@ const (
 	swpFramechanged          = 0x0020
 	qemuWindowFrame          = 0x00CF0000 // caption, resize frame, system menu, min/max buttons
 )
+
+func enablePerMonitorDPIAwareness() {
+	const perMonitorV2 = ^uintptr(3)
+	procSetProcessDpiAwarenessCtx.Call(perMonitorV2)
+}
 
 type msgStruct struct {
 	hwnd    uintptr
@@ -200,8 +206,9 @@ func releaseQemuCursor() {
 // The display enforcer finds QEMU's visible display windows and keeps them
 // titled appTitle (QEMU rewrites its own title on every grab toggle, so the
 // caller reasserts this periodically), maximizes it the first time it appears
-// (launch-UX contract: maximized by default, never fullscreen, never a small
-// floating window) and keeps our icon on it (HICONs are USER handles, valid
+// (launch-UX contract: maximized by default, never fullscreen,
+// never a small floating window) and keeps our icon on them (HICONs are USER
+// handles, valid across processes in a session, so WM_SETICON onto QEMU's
 // across processes in a session, so WM_SETICON onto QEMU's window works).
 // Users must never see QEMU chrome.
 //
@@ -253,9 +260,6 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		return 1
 	}
 	enumTitleSeen[hwnd] = true
-	if enumTitleBorderless {
-		makeBorderless(hwnd)
-	}
 	var buf [maxTitle]uint16
 	procGetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), maxTitle)
 	title := syscall.UTF16ToString(buf[:])
@@ -267,7 +271,7 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		}
 		state = &displayWindowState{index: index}
 		enumTitleWindows[hwnd] = state
-		if !enumTitleFullscreen {
+		if !enumTitleFullscreen && !enumTitleBorderless {
 			monitors := enumTitleMonitors
 			placement, err := loadDisplayPlacement(enumTitleDir, index)
 			if err != nil || !placement.usable(monitors) {
@@ -299,7 +303,7 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		value, _ := syscall.UTF16PtrFromString(wanted)
 		procSetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(value)))
 	}
-	if enumTitleTopologyChanged && !enumTitleFullscreen {
+	if enumTitleTopologyChanged && !enumTitleFullscreen && !enumTitleBorderless {
 		if now := capturePlacement(hwnd); now != nil && !now.usable(enumTitleMonitors) {
 			if restored := initialDisplayPlacement(state.index, enumTitleMonitors); restored != nil {
 				applyPlacement(hwnd, restored)
@@ -315,7 +319,7 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 			}
 		}
 	}
-	if !enumTitleFullscreen {
+	if !enumTitleFullscreen && !enumTitleBorderless {
 		if now := capturePlacement(hwnd); now != nil && !now.sameAs(state.last) {
 			now.SavedAt = time.Now()
 			if saveDisplayPlacement(enumTitleDir, state.index, *now) == nil {
@@ -324,15 +328,6 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		}
 	}
 	return 1
-}
-
-func makeBorderless(hwnd uintptr) {
-	style, _, _ := procGetWindowLongPtrW.Call(hwnd, uintptr(gwlpStyle))
-	if style&uintptr(qemuWindowFrame) == 0 {
-		return
-	}
-	procSetWindowLongPtrW.Call(hwnd, uintptr(gwlpStyle), style&^uintptr(qemuWindowFrame))
-	procSetWindowPos.Call(hwnd, 0, 0, 0, 0, 0, swpNoSize|swpNoMove|swpNoZorder|swpFramechanged)
 }
 
 func enforceDisplayWindows(pid uint32, dir string, fullscreen bool, icon uintptr) {

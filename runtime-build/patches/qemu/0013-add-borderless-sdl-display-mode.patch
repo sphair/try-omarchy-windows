@@ -1,0 +1,217 @@
+diff --git a/qapi/ui.json b/qapi/ui.json
+index 9ad68f44cc..89af762f44 100644
+--- a/qapi/ui.json
++++ b/qapi/ui.json
+@@ -1473,10 +1473,13 @@
+ # @grab-mod: Modifier keys that should be pressed together with the
+ #     "G" key to release the mouse grab.
+ #
++# @borderless: Start with window decorations disabled and the window
++#     maximized (default: off).
++#
+ # Since: 7.1
+ ##
+ { 'struct'  : 'DisplaySDL',
+-  'data'    : { '*grab-mod'   : 'HotKeyMod' } }
++  'data'    : { '*grab-mod'   : 'HotKeyMod', '*borderless' : 'bool' } }
+ 
+ ##
+ # @DisplayType:
+diff --git a/ui/sdl2.c b/ui/sdl2.c
+index 7983a0991e..a71c15f544 100644
+--- a/ui/sdl2.c
++++ b/ui/sdl2.c
+@@ -26,6 +26,10 @@
+ #include "qemu/osdep.h"
+ #include "qemu/module.h"
+ #include "qemu/cutils.h"
++#include "qemu/error-report.h"
++#ifdef _WIN32
++#include <windows.h>
++#endif
+ #include "ui/console.h"
+ #include "ui/input.h"
+ #include "ui/sdl2.h"
+@@ -50,6 +54,8 @@ static bool ctrl_grab;
+ 
+ static int gui_saved_grab;
+ static int gui_fullscreen;
++static bool gui_borderless;
++static bool *sdl2_borderless_decorated;
+ static int gui_grab_code = KMOD_LALT | KMOD_LCTRL;
+ static SDL_Cursor *sdl_cursor_normal;
+ static SDL_Cursor *sdl_cursor_hidden;
+@@ -69,6 +75,59 @@ static Notifier mouse_mode_notifier;
+ 
+ static void sdl_update_caption(struct sdl2_console *scon);
+ 
++#ifdef _WIN32
++static void sdl2_enable_per_monitor_dpi_awareness(void)
++{
++    typedef BOOL (WINAPI *SetProcessDpiAwarenessContextFn)(HANDLE);
++    HMODULE user32 = GetModuleHandle("user32.dll");
++    SetProcessDpiAwarenessContextFn set_process_dpi_awareness_context;
++
++    if (!user32) {
++        return;
++    }
++    set_process_dpi_awareness_context =
++        (SetProcessDpiAwarenessContextFn)GetProcAddress(
++            user32, "SetProcessDpiAwarenessContext");
++    if (set_process_dpi_awareness_context) {
++        set_process_dpi_awareness_context((HANDLE)(intptr_t)-4);
++    }
++}
++#endif
++
++static void sdl2_borderless_maximize(SDL_Window *window)
++{
++    SDL_Rect bounds;
++    int display = SDL_GetWindowDisplayIndex(window);
++
++    if (display < 0) {
++        display = 0;
++    }
++
++    if (SDL_GetDisplayUsableBounds(display, &bounds) == 0) {
++        SDL_SetWindowPosition(window, bounds.x, bounds.y);
++        SDL_SetWindowSize(window, bounds.w, bounds.h - 1);
++    }
++}
++
++static void sdl2_window_decorate(SDL_Window *window)
++{
++    SDL_Rect bounds;
++    int top, left, bottom, right;
++    int display = SDL_GetWindowDisplayIndex(window);
++
++    if (display < 0) {
++        display = 0;
++    }
++
++    SDL_SetWindowBordered(window, SDL_TRUE);
++    if (SDL_GetDisplayUsableBounds(display, &bounds) == 0 &&
++        SDL_GetWindowBordersSize(window, &top, &left, &bottom, &right) == 0) {
++        SDL_SetWindowPosition(window, bounds.x + left, bounds.y + top);
++        SDL_SetWindowSize(window, bounds.w - left - right,
++                          bounds.h - top - bottom);
++    }
++}
++
+ static struct sdl2_console *get_scon_from_window(uint32_t window_id)
+ {
+     int i;
+@@ -91,6 +150,9 @@ static struct sdl2_console *get_scon_from_window(uint32_t window_id)
+ void sdl2_window_create(struct sdl2_console *scon)
+ {
+     int flags = 0;
++    int pos_x = SDL_WINDOWPOS_UNDEFINED;
++    int pos_y = SDL_WINDOWPOS_UNDEFINED;
++    bool want_borderless = gui_borderless && !sdl2_borderless_decorated[scon->idx];
+ 
+     if (!scon->surface) {
+         return;
+@@ -101,21 +163,35 @@ void sdl2_window_create(struct sdl2_console *scon)
+         flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+     } else {
+         flags |= SDL_WINDOW_RESIZABLE;
++        if (want_borderless) {
++            flags |= SDL_WINDOW_BORDERLESS;
++        }
+     }
+     if (scon->hidden) {
+         flags |= SDL_WINDOW_HIDDEN;
+     }
++    if (gui_borderless) {
++        int num_displays = SDL_GetNumVideoDisplays();
++        if (num_displays > 0) {
++            int target_display = scon->idx % num_displays;
++            pos_x = SDL_WINDOWPOS_CENTERED_DISPLAY(target_display);
++            pos_y = SDL_WINDOWPOS_CENTERED_DISPLAY(target_display);
++        }
++    }
+ #ifdef CONFIG_OPENGL
+     if (scon->opengl) {
+         flags |= SDL_WINDOW_OPENGL;
+     }
+ #endif
+ 
+-    scon->real_window = SDL_CreateWindow("", SDL_WINDOWPOS_UNDEFINED,
+-                                         SDL_WINDOWPOS_UNDEFINED,
++    scon->real_window = SDL_CreateWindow("", pos_x,
++                                         pos_y,
+                                          surface_width(scon->surface),
+                                          surface_height(scon->surface),
+                                          flags);
++    if (want_borderless) {
++        sdl2_borderless_maximize(scon->real_window);
++    }
+     if (scon->opengl) {
+         const char *driver = "opengl";
+ 
+@@ -176,9 +252,13 @@ void sdl2_window_resize(struct sdl2_console *scon)
+         return;
+     }
+ 
+-    SDL_SetWindowSize(scon->real_window,
+-                      surface_width(scon->surface),
+-                      surface_height(scon->surface));
++    if (gui_borderless && (SDL_GetWindowFlags(scon->real_window) & SDL_WINDOW_BORDERLESS)) {
++        sdl2_borderless_maximize(scon->real_window);
++    } else {
++        SDL_SetWindowSize(scon->real_window,
++                          surface_width(scon->surface),
++                          surface_height(scon->surface));
++    }
+ }
+ 
+ static void sdl2_redraw(struct sdl2_console *scon)
+@@ -387,6 +467,18 @@ static void sdl_send_mouse_event(struct sdl2_console *scon, int dx, int dy,
+ 
+ static void toggle_full_screen(struct sdl2_console *scon)
+ {
++    if (gui_borderless) {
++        bool borderless = SDL_GetWindowFlags(scon->real_window) & SDL_WINDOW_BORDERLESS;
++        if (borderless) {
++            sdl2_window_decorate(scon->real_window);
++        } else {
++            SDL_SetWindowBordered(scon->real_window, SDL_FALSE);
++            sdl2_borderless_maximize(scon->real_window);
++        }
++        sdl2_borderless_decorated[scon->idx] = borderless;
++        sdl2_redraw(scon);
++        return;
++    }
+     gui_fullscreen = !gui_fullscreen;
+     if (gui_fullscreen) {
+         SDL_SetWindowFullscreen(scon->real_window,
+@@ -1009,6 +1101,9 @@ static void sdl2_display_init(DisplayState *ds, DisplayOptions *o)
+         SDL_LogSetAllPriority(SDL_LOG_PRIORITY_VERBOSE);
+     }
+ 
++#ifdef _WIN32
++    sdl2_enable_per_monitor_dpi_awareness();
++#endif
+     if (SDL_Init(SDL_INIT_VIDEO)) {
+         fprintf(stderr, "Could not initialize SDL(%s) - exiting\n",
+                 SDL_GetError());
+@@ -1038,6 +1133,11 @@ static void sdl2_display_init(DisplayState *ds, DisplayOptions *o)
+     SDL_VERSION(&info.version);
+ 
+     gui_fullscreen = o->has_full_screen && o->full_screen;
++    gui_borderless = o->u.sdl.has_borderless && o->u.sdl.borderless;
++    if (gui_fullscreen && gui_borderless) {
++        error_report("full-screen and borderless cannot be used together");
++        exit(1);
++    }
+ 
+     if (o->u.sdl.has_grab_mod) {
+         if (o->u.sdl.grab_mod == HOT_KEY_MOD_LSHIFT_LCTRL_LALT) {
+@@ -1058,6 +1158,7 @@ static void sdl2_display_init(DisplayState *ds, DisplayOptions *o)
+         return;
+     }
+     sdl2_console = g_new0(struct sdl2_console, sdl2_num_outputs);
++    sdl2_borderless_decorated = g_new0(bool, sdl2_num_outputs);
+     for (i = 0; i < sdl2_num_outputs; i++) {
+         QemuConsole *con = qemu_console_lookup_by_index(i);
+         assert(con != NULL);

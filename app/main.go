@@ -129,6 +129,7 @@ func finishSetupCancellation(cfg *config, err error) bool {
 }
 
 func main() {
+	enablePerMonitorDPIAwareness()
 	cfg := &config{}
 	removeDataOnCancel := false
 	defaultDir := filepath.Join(os.Getenv("LOCALAPPDATA"), defaultDataDirectoryName)
